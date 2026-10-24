@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <meta name="theme-color" content="#121216">
+  <title>Leitor PDF + OCR</title>
+  
+  <!-- Manifesto e Ícone do PWA -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  
+  <!-- PDF.js + CSS da camada de texto -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+  
+  <!-- Tesseract.js para OCR (Reconhecimento de texto em imagens/PDFs escaneados) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #1e1e24;
+      --bar: #121216;
+      --text: #f0f0f5;
+      --accent: #4f46e5;
+      --surface: #272732;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      overflow: hidden;
+    }
+    header, footer {
+      background: var(--bar);
+      padding: 10px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      z-index: 10;
+    }
+    .toolbar-group {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .btn {
+      background: #2a2a35;
+      color: var(--text);
+      border: 1px solid #3f3f4e;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn.primary { background: var(--accent); border-color: var(--accent); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn:active:not(:disabled) { transform: scale(0.96); }
+    input[type="file"] { display: none; }
+    
+    #viewer-container {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 12px;
+    }
+
+    #page-wrapper {
+      position: relative;
+      display: none;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      transition: filter 0.2s ease;
+    }
+
+    .night-mode {
+      filter: invert(0.92) hue-rotate(180deg);
+    }
+
+    .textLayer ::selection {
+      background: rgba(79, 70, 229, 0.35);
+    }
+
+    #page-info { font-size: 14px; font-variant-numeric: tabular-nums; }
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      opacity: 0.6;
+      padding: 24px;
+    }
+
+    /* Estilos da Janela Modal do OCR */
+    #ocr-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.78);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      z-index: 100;
+      backdrop-filter: blur(4px);
+    }
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid #3f3f4e;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 540px;
+      max-height: 85dvh;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 700;
+      font-size: 15px;
+    }
+    #ocr-status {
+      font-size: 13px;
+      color: #a5b4fc;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #181820;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #ocr-progress {
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
+    #ocr-textarea {
+      width: 100%;
+      height: 260px;
+      background: #16161d;
+      color: var(--text);
+      border: 1px solid #3f3f4e;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+      font-family: inherit;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="toolbar-group">
+      <label class="btn primary">
+        📂 Abrir
+        <input type="file" id="file-input" accept="application/pdf">
+      </label>
+      <button class="btn" id="share-btn" disabled title="Compartilhar PDF">
+        📤 Share
+      </button>
+      <button class="btn" id="ocr-btn" disabled title="Extrair texto de PDF escaneado (OCR)">
+        📄 OCR
+      </button>
+    </div>
+    <div class="toolbar-group">
+      <button class="btn" id="zoom-out">A-</button>
+      <button class="btn" id="zoom-in">A+</button>
+      <button class="btn" id="night-toggle" title="Modo Noturno">🌙</button>
+    </div>
+  </header>
+
+  <main id="viewer-container">
+    <div id="empty-msg" class="empty-state">
+      Toque em <b>📂 Abrir</b> acima para escolher um arquivo PDF do celular.
+    </div>
+    
+    <div id="page-wrapper">
+      <canvas id="pdf-canvas"></canvas>
+      <div id="text-layer" class="textLayer"></div>
+    </div>
+  </main>
+
+  <!-- Modal de Reconhecimento de Texto (OCR) -->
+  <div id="ocr-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>📄 Texto Extraído da Página (OCR)</span>
+        <button class="btn" id="close-ocr">✕</button>
+      </div>
+      <div id="ocr-status">Preparando leitor óptico...</div>
+      <div class="progress-bar">
+        <div id="ocr-progress"></div>
+      </div>
+      <textarea id="ocr-textarea" placeholder="O texto reconhecido aparecerá aqui..."></textarea>
+      <div class="modal-actions">
+        <button class="btn primary" id="copy-ocr">📋 Copiar Texto</button>
+        <button class="btn" id="share-ocr">✉️ Compartilhar Texto</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <button class="btn" id="prev-page">◀ Anterior</button>
+    <span id="page-info">0 / 0</span>
+    <button class="btn" id="next-page">Próxima ▶</button>
+  </footer>
+
+  <script>
+    // Registro do Service Worker para funcionamento Offline e Instalação PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let pdfDoc = null,
+        pageNum = 1,
+        pageRendering = false,
+        pageNumPending = null,
+        scale = 1.2,
+        currentFile = null,
+        currentFileName = '';
+
+    const pageWrapper = document.getElementById('page-wrapper'),
+          canvas = document.getElementById('pdf-canvas'),
+          textLayerDiv = document.getElementById('text-layer'),
+          ctx = canvas.getContext('2d'),
+          pageInfo = document.getElementById('page-info'),
+          emptyMsg = document.getElementById('empty-msg'),
+          shareBtn = document.getElementById('share-btn'),
+          ocrBtn = document.getElementById('ocr-btn'),
+          ocrModal = document.getElementById('ocr-modal'),
+          ocrStatus = document.getElementById('ocr-status'),
+          ocrProgress = document.getElementById('ocr-progress'),
+          ocrTextarea = document.getElementById('ocr-textarea');
+
+    function renderPage(num) {
+      pageRendering = true;
+      pdfDoc.getPage(num).then(page => {
+        const outputScale = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale });
+
+        canvas.style.width = `${ Math.floor(viewport.width) }px`;
+        canvas.style.height = `${ Math.floor(viewport.height) }px`;
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+
+        pageWrapper.style.width = `${ Math.floor(viewport.width) }px`;
+        pageWrapper.style.height = `${ Math.floor(viewport.height) }px`;
+        pageWrapper.style.setProperty('--scale-factor', scale);
+
+        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+        const renderContext = { canvasContext: ctx, transform, viewport };
+
+        const renderTask = page.render(renderContext);
+
+        textLayerDiv.innerHTML = '';
+        const textTask = page.getTextContent().then(textContent => {
+          return pdfjsLib.renderTextLayer({
+            textContentSource: textContent,
+            container: textLayerDiv,
+            viewport: viewport,
+            textDivs: []
+          }).promise;
+        });
+
+        Promise.all([renderTask.promise, textTask]).then(() => {
+          pageRendering = false;
+          if (pageNumPending !== null) {
+            renderPage(pageNumPending);
+            pageNumPending = null;
+          }
+        });
+      });
+
+      pageInfo.textContent = `${num} / ${pdfDoc.numPages}`;
+      if (currentFileName) {
+        localStorage.setItem(`pdf_page_${currentFileName}`, num);
+      }
+    }
+
+    function queueRenderPage(num) {
+      if (pageRendering) pageNumPending = num;
+      else renderPage(num);
+    }
+
+    document.getElementById('prev-page').addEventListener('click', () => {
+      if (!pdfDoc || pageNum <= 1) return;
+      pageNum--;
+      queueRenderPage(pageNum);
+      document.getElementById('viewer-container').scrollTop = 0;
+    });
+
+    document.getElementById('next-page').addEventListener('click', () => {
+      if (!pdfDoc || pageNum >= pdfDoc.numPages) return;
+      pageNum++;
+      queueRenderPage(pageNum);
+      document.getElementById('viewer-container').scrollTop = 0;
+    });
+
+    document.getElementById('zoom-in').addEventListener('click', () => {
+      if (!pdfDoc) return;
+      scale = Math.min(scale + 0.25, 3.5);
+      queueRenderPage(pageNum);
+    });
+
+    document.getElementById('zoom-out').addEventListener('click', () => {
+      if (!pdfDoc) return;
+      scale = Math.max(scale - 0.25, 0.5);
+      queueRenderPage(pageNum);
+    });
+
+    document.getElementById('night-toggle').addEventListener('click', () => {
+      canvas.classList.toggle('night-mode');
+    });
+
+    // Compartilhar documento completo
+    shareBtn.addEventListener('click', async () => {
+      if (!currentFile) return;
+
+      const shareData = {
+        title: currentFileName,
+        text: `Segue em anexo o documento: ${currentFileName} (Página ${pageNum})`,
+        files: [currentFile]
+      };
+
+      if (navigator.canShare && navigator.canShare({ files: [currentFile] })) {
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      const subject = encodeURIComponent(`Documento PDF: ${currentFileName}`);
+      const body = encodeURIComponent(`Olá,\n\nCompartilho informações do documento "${currentFileName}" (Página ${pageNum}).`);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    });
+
+    // Lógica de OCR na página atual usando Tesseract.js (Português)
+    ocrBtn.addEventListener('click', async () => {
+      if (!pdfDoc) return;
+      ocrModal.style.display = 'flex';
+      ocrTextarea.value = '';
+      ocrProgress.style.width = '5%';
+      ocrStatus.textContent = 'Iniciando motor OCR em Português...';
+
+      try {
+        const result = await Tesseract.recognize(
+          canvas,
+          'por',
+          {
+            logger: m => {
+              if (m.status === 'recognizing text') {
+                const pct = Math.round(m.progress * 100);
+                ocrProgress.style.width = `${pct}%`;
+                ocrStatus.textContent = `Lendo página ${pageNum}... (${pct}%)`;
+              } else {
+                ocrStatus.textContent = `Processando: ${m.status}...`;
+              }
+            }
+          }
+        );
+
+        const extractedText = result.data.text.trim();
+        ocrTextarea.value = extractedText || 'Nenhum texto legível foi encontrado nesta página.';
+        ocrProgress.style.width = '100%';
+        ocrStatus.textContent = `Leitura concluída! Você pode revisar ou copiar o texto abaixo.`;
+      } catch (err) {
+        ocrStatus.textContent = 'Erro ao executar o OCR. Verifique sua conexão na primeira execução.';
+        ocrTextarea.value = err.message;
+      }
+    });
+
+    document.getElementById('close-ocr').addEventListener('click', () => {
+      ocrModal.style.display = 'none';
+    });
+
+    document.getElementById('copy-ocr').addEventListener('click', async () => {
+      if (!ocrTextarea.value) return;
+      ocrTextarea.select();
+      await navigator.clipboard.writeText(ocrTextarea.value);
+      ocrStatus.textContent = '✅ Texto copiado para a área de transferência!';
+    });
+
+    document.getElementById('share-ocr').addEventListener('click', async () => {
+      const text = ocrTextarea.value.trim();
+      if (!text) return;
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: `Texto da página ${pageNum} - ${currentFileName}`,
+            text: text
+          });
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      const subject = encodeURIComponent(`Trecho extraído: ${currentFileName} (Pág. ${pageNum})`);
+      const body = encodeURIComponent(text);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    });
+
+    document.getElementById('file-input').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      currentFile = file;
+      currentFileName = file.name;
+      shareBtn.disabled = false;
+      ocrBtn.disabled = false;
+
+      const fileReader = new FileReader();
+      fileReader.onload = function() {
+        const typedarray = new Uint8Array(this.result);
+        pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+          pdfDoc = pdf;
+          emptyMsg.style.display = 'none';
+          pageWrapper.style.display = 'block';
+
+          pdf.getPage(1).then(firstPage => {
+            const unscaledViewport = firstPage.getViewport({ scale: 1 });
+            const containerWidth = document.getElementById('viewer-container').clientWidth - 24;
+            scale = Math.max(0.6, Math.min(containerWidth / unscaledViewport.width, 2.0));
+
+            const savedPage = parseInt(localStorage.getItem(`pdf_page_${currentFileName}`), 10);
+            pageNum = (savedPage && savedPage <= pdf.numPages) ? savedPage : 1;
+            renderPage(pageNum);
+          });
+        });
+      };
+      fileReader.readAsArrayBuffer(file);
+    });
+  </script>
+</body>
+</html>

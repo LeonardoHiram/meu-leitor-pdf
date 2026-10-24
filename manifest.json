@@ -1,0 +1,18 @@
+{
+  "name": "Leitor PDF + OCR",
+  "short_name": "Leitor PDF",
+  "description": "Leitor de PDF rápido com seleção de texto, modo noturno, compartilhamento e OCR em Português.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121216",
+  "theme_color": "#121216",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
