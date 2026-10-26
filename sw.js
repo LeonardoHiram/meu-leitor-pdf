@@ -1,6 +1,5 @@
 const CACHE_NAME = 'leitor-pdf-dinamico';
 
-// Bibliotecas pesadas que nunca mudam (ficam salvas direto no cache para economizar dados)
 const STATIC_LIBRARIES = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
@@ -25,19 +24,43 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  const url = event.request.url;
+  const url = new URL(event.request.url);
 
-  // 1. Para as bibliotecas externas pesadas (PDF.js e Tesseract): usa o cache primeiro (rápido)
-  if (STATIC_LIBRARIES.some(lib => url.includes(lib))) {
+  // 1. INTERCEPTADOR DE PDF ENVIADO PELO ANDROID (Web Share Target POST)
+  if (event.request.method === 'POST' && url.searchParams.has('shared-pdf')) {
+    event.respondWith((async () => {
+      try {
+        const formData = await event.request.formData();
+        const file = formData.get('pdf') || formData.getAll('pdf')[0];
+        if (file) {
+          const cache = await caches.open(CACHE_NAME);
+          const headers = new Headers({
+            'Content-Type': file.type || 'application/pdf',
+            'X-File-Name': encodeURIComponent(file.name || 'documento.pdf')
+          });
+          await cache.put('./__shared_pdf__', new Response(file, { headers }));
+        }
+      } catch (err) {
+        console.error('Erro ao capturar PDF no Service Worker:', err);
+      }
+      // Redireciona para o index.html sinalizando que há um PDF pronto na memória
+      return Response.redirect('./index.html?load-shared=1', 303);
+    })());
+    return;
+  }
+
+  // Ignora outras requisições que não sejam GET
+  if (event.request.method !== 'GET') return;
+
+  // 2. Bibliotecas estáticas pesadas: Cache-First
+  if (STATIC_LIBRARIES.some(lib => event.request.url.includes(lib))) {
     event.respondWith(
       caches.match(event.request).then(cached => cached || fetch(event.request))
     );
     return;
   }
 
-  // 2. Para os SEUS arquivos (index.html, manifest.json, ícones):
-  // Busca a versão mais nova na internet primeiro e atualiza o cache sozinho!
-  // Se estiver sem internet (offline), usa a versão salva no cache.
+  // 3. Arquivos do próprio app: Network-First com fallback offline
   event.respondWith(
     fetch(event.request)
       .then(networkResponse => {
