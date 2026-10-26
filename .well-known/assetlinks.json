@@ -1,8 +1,0 @@
-[{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "io.github.leonardohiram.twa",
-        "sha256_cert_fingerprints": ["98:2B:A1:32:A7:72:DB:A3:44:44:26:D4:1C:BA:A9:29:8F:E6:FD:25:02:B6:94:81:BC:D7:0E:23:B8:AF:F8:D3"]
-      }
-    }]
