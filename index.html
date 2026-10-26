@@ -6,16 +6,12 @@
   <meta name="theme-color" content="#121216">
   <title>Leitor PDF + OCR</title>
 
-  <!-- Manifesto e Ícones do PWA -->
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
   <link rel="apple-touch-icon" href="./icon-192.png">
 
-  <!-- PDF.js + CSS da camada de texto -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
-
-  <!-- Tesseract.js para OCR -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <style>
@@ -38,24 +34,30 @@
     }
     header, footer {
       background: var(--bar);
-      padding: 10px 10px;
+      padding: 8px 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
+      gap: 5px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
       z-index: 10;
+      flex-wrap: wrap;
+    }
+    body.immersive-reading header,
+    body.immersive-reading footer {
+      display: none;
     }
     .toolbar-group {
       display: flex;
-      gap: 6px;
+      gap: 5px;
       align-items: center;
+      flex-wrap: wrap;
     }
     .btn {
       background: #2a2a35;
       color: var(--text);
       border: 1px solid #3f3f4e;
-      padding: 8px 10px;
+      padding: 7px 9px;
       border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
@@ -63,11 +65,11 @@
       white-space: nowrap;
     }
     .btn.primary { background: var(--accent); border-color: var(--accent); }
+    .btn.active { background: #dc2626; border-color: #ef4444; color: #fff; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn:active:not(:disabled) { transform: scale(0.96); }
     input[type="file"] { display: none; }
 
-    /* Barra de Busca (Ctrl+F) */
     #search-bar {
       background: var(--surface);
       padding: 8px 12px;
@@ -101,7 +103,7 @@
       display: flex;
       justify-content: center;
       align-items: flex-start;
-      padding: 12px;
+      padding: 10px;
     }
 
     #page-wrapper {
@@ -125,13 +127,11 @@
       background: rgba(79, 70, 229, 0.35);
     }
 
-    /* Destaque para termos buscados */
     .search-highlight {
       background: rgba(250, 204, 21, 0.45);
       border-radius: 2px;
     }
 
-    /* Botão interativo de pular página no rodapé */
     #page-info {
       font-size: 14px;
       font-variant-numeric: tabular-nums;
@@ -149,9 +149,9 @@
       text-align: center;
       opacity: 0.6;
       padding: 24px;
+      line-height: 1.6;
     }
 
-    /* Estilos da Janela Modal do OCR */
     #ocr-modal {
       position: fixed;
       inset: 0;
@@ -226,26 +226,29 @@
 
   <header>
     <div class="toolbar-group">
-      <label class="btn primary">
+      <label class="btn primary" id="open-label">
         📂 Abrir
         <input type="file" id="file-input" accept="application/pdf">
       </label>
+      <button class="btn" id="tts-btn" disabled title="Ler página em voz alta">
+        🔊 Ouvir
+      </button>
       <button class="btn" id="share-btn" disabled title="Compartilhar PDF">
         📤 Share
       </button>
-      <button class="btn" id="ocr-btn" disabled title="Extrair texto de PDF escaneado (OCR)">
+      <button class="btn" id="ocr-btn" disabled title="Extrair texto via OCR">
         📄 OCR
       </button>
     </div>
     <div class="toolbar-group">
-      <button class="btn" id="search-toggle" disabled title="Buscar texto no PDF (Ctrl+F)">🔍</button>
+      <button class="btn" id="search-toggle" disabled title="Buscar texto no PDF">🔍</button>
       <button class="btn" id="zoom-out">A-</button>
       <button class="btn" id="zoom-in">A+</button>
       <button class="btn" id="night-toggle" title="Modo Noturno">🌙</button>
+      <button class="btn" id="fullscreen-toggle" title="Tela Cheia">⛶</button>
     </div>
   </header>
 
-  <!-- Barra de Busca de Texto (Ctrl+F) -->
   <div id="search-bar">
     <input type="text" id="search-input" placeholder="Buscar palavra no documento...">
     <span id="search-status">0/0</span>
@@ -256,7 +259,8 @@
 
   <main id="viewer-container">
     <div id="empty-msg" class="empty-state">
-      Toque em <b>📂 Abrir</b> acima para escolher um arquivo PDF do celular.
+      Toque em <b>📂 Abrir</b> para carregar seu PDF.<br><br>
+      <small>💡 Gire o celular para modo paisagem a qualquer momento ou toque em <b>🔊 Ouvir</b> para escutar o documento.</small>
     </div>
 
     <div id="page-wrapper">
@@ -265,7 +269,6 @@
     </div>
   </main>
 
-  <!-- Modal de Reconhecimento de Texto (OCR) -->
   <div id="ocr-modal">
     <div class="modal-card">
       <div class="modal-header">
@@ -291,7 +294,6 @@
   </footer>
 
   <script>
-    // Registro do Service Worker
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -311,7 +313,8 @@
         wakeLock = null,
         searchMatches = [],
         currentMatchIdx = -1,
-        activeSearchQuery = '';
+        activeSearchQuery = '',
+        isSpeaking = false;
 
     const viewerContainer = document.getElementById('viewer-container'),
           pageWrapper = document.getElementById('page-wrapper'),
@@ -320,9 +323,11 @@
           ctx = canvas.getContext('2d'),
           pageInfo = document.getElementById('page-info'),
           emptyMsg = document.getElementById('empty-msg'),
+          ttsBtn = document.getElementById('tts-btn'),
           shareBtn = document.getElementById('share-btn'),
           ocrBtn = document.getElementById('ocr-btn'),
           searchToggleBtn = document.getElementById('search-toggle'),
+          fullscreenBtn = document.getElementById('fullscreen-toggle'),
           searchBar = document.getElementById('search-bar'),
           searchInput = document.getElementById('search-input'),
           searchStatus = document.getElementById('search-status'),
@@ -332,8 +337,124 @@
           ocrTextarea = document.getElementById('ocr-textarea');
 
     // ==========================================
-    // 1. WAKE LOCK API (Manter tela sempre acesa)
+    // TEXT-TO-SPEECH (Leitura em Voz Alta)
     // ==========================================
+    function stopSpeaking() {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      isSpeaking = false;
+      ttsBtn.classList.remove('active');
+      ttsBtn.textContent = '🔊 Ouvir';
+    }
+
+    async function toggleSpeech() {
+      if (!('speechSynthesis' in window)) {
+        alert('Seu dispositivo não suporta síntese de voz nativa.');
+        return;
+      }
+
+      if (isSpeaking) {
+        stopSpeaking();
+        return;
+      }
+
+      if (!pdfDoc) return;
+
+      ttsBtn.textContent = '⏳ Carregando...';
+
+      // 1. Tenta extrair o texto nativo da página
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      let text = textContent.items.map(item => item.str).join(' ').trim();
+
+      // 2. Se a página for uma imagem escaneada sem texto, avisa e sugere o OCR
+      if (!text || text.length < 5) {
+        ttsBtn.textContent = '🔊 Ouvir';
+        if (confirm('Esta página não possui texto digitalizado. Deseja executar o OCR primeiro para ler a imagem?')) {
+          ocrBtn.click();
+        }
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'pt-BR';
+      utterance.rate = 1.0;
+
+      utterance.onstart = () => {
+        isSpeaking = true;
+        ttsBtn.classList.add('active');
+        ttsBtn.textContent = '⏹️ Parar';
+      };
+
+      utterance.onend = () => {
+        stopSpeaking();
+      };
+
+      utterance.onerror = () => {
+        stopSpeaking();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    ttsBtn.addEventListener('click', toggleSpeech);
+
+    // ==========================================
+    // ROTAÇÃO INTELIGENTE DA TELA (Redimensionamento)
+    // ==========================================
+    let resizeTimeout = null;
+    function handleAutoFit() {
+      if (!pdfDoc) return;
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(async () => {
+        const page = await pdfDoc.getPage(pageNum);
+        const unscaledViewport = page.getViewport({ scale: 1 });
+        const containerWidth = viewerContainer.clientWidth - 20;
+
+        // Ajusta a escala para preencher a largura da tela mantendo proporção
+        scale = Math.max(0.6, Math.min(containerWidth / unscaledViewport.width, 3.0));
+        baseScale = scale;
+        renderPage(pageNum);
+      }, 150);
+    }
+
+    window.addEventListener('resize', handleAutoFit);
+    window.addEventListener('orientationchange', handleAutoFit);
+
+    // ==========================================
+    // TELA CHEIA E WAKE LOCK
+    // ==========================================
+    function enterFullscreen() {
+      const elem = document.documentElement;
+      if (!document.fullscreenElement && elem.requestFullscreen) {
+        elem.requestFullscreen().catch(() => {});
+      }
+    }
+
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        enterFullscreen();
+      } else if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    });
+
+    document.getElementById('open-label').addEventListener('click', () => {
+      enterFullscreen();
+    });
+
+    let lastTap = 0;
+    viewerContainer.addEventListener('touchend', e => {
+      if (!pdfDoc || e.changedTouches.length !== 1) return;
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        document.body.classList.toggle('immersive-reading');
+        enterFullscreen();
+      }
+      lastTap = now;
+    }, { passive: true });
+
     async function requestWakeLock() {
       if ('wakeLock' in navigator && pdfDoc) {
         try {
@@ -349,7 +470,7 @@
     });
 
     // ==========================================
-    // RENDERIZAÇÃO DA PÁGINA E DESTAQUE DE BUSCA
+    // RENDERIZAÇÃO E BUSCA
     // ==========================================
     function highlightSearchInLayer() {
       if (!activeSearchQuery) return;
@@ -409,6 +530,7 @@
     }
 
     function queueRenderPage(num) {
+      stopSpeaking(); // Para a leitura em voz alta se o usuário virar de página
       if (pageRendering) pageNumPending = num;
       else renderPage(num);
     }
@@ -430,9 +552,6 @@
     document.getElementById('prev-page').addEventListener('click', goPrevPage);
     document.getElementById('next-page').addEventListener('click', goNextPage);
 
-    // ==========================================
-    // 2. JUMP TO PAGE (Pular direto para página)
-    // ==========================================
     pageInfo.addEventListener('click', () => {
       if (!pdfDoc) return;
       const input = prompt(`Digite o número da página (1 a ${pdfDoc.numPages}):`, pageNum);
@@ -442,44 +561,33 @@
         pageNum = targetPage;
         queueRenderPage(pageNum);
         viewerContainer.scrollTop = 0;
-      } else {
-        alert(`Por favor, insira um número válido entre 1 e ${pdfDoc.numPages}.`);
       }
     });
 
-    // ==========================================
-    // 3. SWIPE PAGE (Gesto de deslizar lateral)
-    // ==========================================
     let touchStartX = 0,
         touchStartY = 0;
 
     viewerContainer.addEventListener('touchstart', e => {
-      if (e.touches.length !== 1) return; // Ignora gesto de pinça (2 dedos)
+      if (e.touches.length !== 1) return;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
     }, { passive: true });
 
     viewerContainer.addEventListener('touchend', e => {
       if (!pdfDoc || e.changedTouches.length !== 1) return;
-      // Evita trocar de página sem querer se o usuário deu muito zoom para ler cantos da folha
       if (scale > baseScale * 1.15) return;
-      // Evita trocar de página se o usuário estiver selecionando texto
       const selection = window.getSelection();
       if (selection && selection.toString().length > 0) return;
 
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = e.changedTouches[0].clientY - touchStartY;
 
-      // Deslize horizontal claro (maior que 75px e muito mais horizontal que vertical)
       if (Math.abs(dx) > 75 && Math.abs(dx) > Math.abs(dy) * 1.8) {
-        if (dx < 0) goNextPage(); // Deslizou para a esquerda -> Próxima
-        else goPrevPage();        // Deslizou para a direita -> Anterior
+        if (dx < 0) goNextPage();
+        else goPrevPage();
       }
     }, { passive: true });
 
-    // ==========================================
-    // 4. BUSCA DE TEXTO NO PDF (Ctrl+F / Lupa)
-    // ==========================================
     function toggleSearchBar() {
       if (!pdfDoc) return;
       const isVisible = searchBar.style.display === 'flex';
@@ -531,7 +639,6 @@
       }
 
       if (searchMatches.length > 0) {
-        // Começa pela página atual ou próxima mais próxima
         const nextIdx = searchMatches.findIndex(p => p >= pageNum);
         currentMatchIdx = nextIdx !== -1 ? nextIdx : 0;
         pageNum = searchMatches[currentMatchIdx];
@@ -575,9 +682,6 @@
       queueRenderPage(pageNum);
     });
 
-    // ==========================================
-    // ZOOM, MODO NOTURNO, SHARE E OCR
-    // ==========================================
     document.getElementById('zoom-in').addEventListener('click', () => {
       if (!pdfDoc) return;
       scale = Math.min(scale + 0.25, 3.5);
@@ -683,13 +787,11 @@
       window.location.href = `mailto:?subject=${subject}&body=${body}`;
     });
 
-    // ==========================================
-    // 5. CARREGAMENTO DO ARQUIVO + FILE HANDLERS
-    // ==========================================
     function loadPdfFile(file) {
       if (!file) return;
       currentFile = file;
       currentFileName = file.name;
+      ttsBtn.disabled = false;
       shareBtn.disabled = false;
       ocrBtn.disabled = false;
       searchToggleBtn.disabled = false;
@@ -702,12 +804,11 @@
           emptyMsg.style.display = 'none';
           pageWrapper.style.display = 'block';
 
-          // Ativa o Wake Lock para a tela não desligar durante a leitura
           requestWakeLock();
 
           pdf.getPage(1).then(firstPage => {
             const unscaledViewport = firstPage.getViewport({ scale: 1 });
-            const containerWidth = viewerContainer.clientWidth - 24;
+            const containerWidth = viewerContainer.clientWidth - 20;
             scale = Math.max(0.6, Math.min(containerWidth / unscaledViewport.width, 2.0));
             baseScale = scale;
 
@@ -724,7 +825,6 @@
       loadPdfFile(e.target.files[0]);
     });
 
-    // Recebe arquivos abertos pelo menu "Abrir com..." do sistema operacional
     if ('launchQueue' in window) {
       window.launchQueue.setConsumer(async launchParams => {
         if (!launchParams.files || !launchParams.files.length) return;
