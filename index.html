@@ -440,10 +440,12 @@
       }
     });
 
+// Para iniciar o app em modo de tela cheia
+/*
     document.getElementById('open-label').addEventListener('click', () => {
       enterFullscreen();
     });
-
+*/
     let lastTap = 0;
     viewerContainer.addEventListener('touchend', e => {
       if (!pdfDoc || e.changedTouches.length !== 1) return;
