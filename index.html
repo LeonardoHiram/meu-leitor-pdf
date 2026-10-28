@@ -823,57 +823,78 @@
       fileReader.readAsArrayBuffer(file);
     }
 
-    document.getElementById('file-input').addEventListener('change', e => {
-      loadPdfFile(e.target.files[0]);
+    document.getElementById('file-input').addEventListener('change', e => {loadPdfFile(e.target.files[0]);
     });
 
-    if ('launchQueue' in window) {
-      window.launchQueue.setConsumer(async launchParams => {
-        if (!launchParams.files || !launchParams.files.length) return;
-        const fileHandle = launchParams.files[0];
-        const file = await fileHandle.getFile();
-        loadPdfFile(file);
-      });
 
-    }
+    // Abre o arquivo PDF tanto via função direta quanto injetando no botão #file-input
+	    function abrirArquivoRecebido(file) {
+	      if (!file) return;
 
-    // Recebe arquivos abertos no Desktop (File Handlers API)
-	    if ('launchQueue' in window) {
-	      window.launchQueue.setConsumer(async launchParams => {
-	        if (!launchParams.files || !launchParams.files.length) return;
-	        const fileHandle = launchParams.files[0];
-	        const file = await fileHandle.getFile();
+	      if (typeof loadPdfFile === 'function') {
 	        loadPdfFile(file);
-	      });
+	        return;
+	      }
+
+	      const fileInput = document.getElementById('file-input');
+	      if (fileInput) {
+	        const dt = new DataTransfer();
+	        dt.items.add(file);
+	        fileInput.files = dt.files;
+	        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+	      }
 	    }
 
-	    // Recebe arquivos PDF enviados pelo Android (Web Share Target API via sw.js)
+	    // Verifica na memória se o Android enviou um PDF via "Share / Compartilhar"
+	    let verificandoShare = false;
 	    async function checkAndroidSharedPdf() {
-	      const params = new URLSearchParams(window.location.search);
-	      if (!params.has('load-shared') || !('caches' in window)) return;
+	      if (verificandoShare || !('caches' in window)) return;
+	      verificandoShare = true;
 
 	      try {
+	        const SHARED_PDF_KEY = 'https://shared-pdf.local/documento.pdf';
 	        const cache = await caches.open('leitor-pdf-dinamico');
-	        const response = await cache.match('./__shared_pdf__');
+	        const response = await cache.match(SHARED_PDF_KEY) || await cache.match('./__shared_pdf__');
+
 	        if (response) {
 	          const blob = await response.blob();
 	          const rawName = response.headers.get('X-File-Name');
 	          const fileName = rawName ? decodeURIComponent(rawName) : 'documento.pdf';
 	          const file = new File([blob], fileName, { type: 'application/pdf' });
 
-	          // Limpa o arquivo temporário do cache e restaura a URL limpa
+	          // Limpa o arquivo temporário do cache para não reabrir repetidamente depois
+	          await cache.delete(SHARED_PDF_KEY);
 	          await cache.delete('./__shared_pdf__');
-	          window.history.replaceState({}, document.title, './index.html');
 
-	          // Carrega o PDF automaticamente na tela!
-	          loadPdfFile(file);
+	          // Limpa a URL caso tenha vindo com ?load-shared=1
+	          if (window.location.search.includes('load-shared')) {
+	            window.history.replaceState({}, document.title, './index.html');
+	          }
+
+	          // Dispara a renderização do PDF na tela!
+	          abrirArquivoRecebido(file);
 	        }
 	      } catch (err) {
 	        console.error('Falha ao recuperar PDF compartilhado:', err);
+	      } finally {
+	        verificandoShare = false;
 	      }
 	    }
 
-    window.addEventListener('DOMContentLoaded', checkAndroidSharedPdf);
+	    // Checa ao iniciar, ao voltar do segundo plano e ao receber sinal do Service Worker
+	    window.addEventListener('DOMContentLoaded', checkAndroidSharedPdf);
+	    window.addEventListener('load', checkAndroidSharedPdf);
+	    window.addEventListener('pageshow', checkAndroidSharedPdf);
+	    document.addEventListener('visibilitychange', () => {
+	      if (document.visibilityState === 'visible') checkAndroidSharedPdf();
+	    });
+	    if ('serviceWorker' in navigator) {
+	      navigator.serviceWorker.addEventListener('message', event => {
+	        if (event.data && event.data.type === 'SHARED_PDF_READY') {
+	          checkAndroidSharedPdf();
+	        }
+	      });
+    }
 
   </script>
 </body>
