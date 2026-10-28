@@ -1,5 +1,6 @@
-const CACHE_NAME = 'leitor-pdf-dinamico';
+const CACHE_NAME = 'leitor-pdf-v3';
 const SHARED_PDF_KEY = 'https://shared-pdf.local/documento.pdf';
+const SHARED_STATUS_KEY = 'https://shared-pdf.local/status.json';
 
 const STATIC_LIBRARIES = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
@@ -25,17 +26,17 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  // 1. INTERCEPTADOR DE PDF ENVIADO PELO ANDROID (Qualquer requisição POST)
+  // 1. INTERCEPTADOR DE PDF ENVIADO PELO ANDROID (Web Share Target POST)
   if (event.request.method === 'POST') {
     event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
       try {
         const formData = await event.request.formData();
         let file = formData.get('pdf');
 
-        // Busca qualquer arquivo válido caso o Android envie com outro nome de campo
         if (!file) {
           for (const [, value] of formData.entries()) {
-            if (value && typeof value === 'object' && 'arrayBuffer' in value && value.size > 0) {
+            if (value && typeof value === 'object' && 'size' in value && value.size > 0) {
               file = value;
               break;
             }
@@ -43,9 +44,7 @@ self.addEventListener('fetch', event => {
         }
 
         if (file && file.size > 0) {
-          // Copia os bytes para a memória imediatamente antes do Android fechar o stream
           const buffer = await file.arrayBuffer();
-          const cache = await caches.open(CACHE_NAME);
           const headers = new Headers({
             'Content-Type': file.type || 'application/pdf',
             'Content-Length': String(buffer.byteLength),
@@ -53,18 +52,19 @@ self.addEventListener('fetch', event => {
           });
 
           await cache.put(SHARED_PDF_KEY, new Response(buffer, { headers }));
+          await cache.put(SHARED_STATUS_KEY, new Response(JSON.stringify({ ok: true, name: file.name, size: buffer.byteLength })));
 
-          // Avisa o aplicativo caso ele já esteja aberto em segundo plano
           const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
           for (const client of clientsList) {
             client.postMessage({ type: 'SHARED_PDF_READY' });
           }
+        } else {
+          await cache.put(SHARED_STATUS_KEY, new Response(JSON.stringify({ ok: false, reason: 'O Android abriu o POST, mas não anexou o arquivo no formulário.' })));
         }
       } catch (err) {
-        console.error('Erro ao capturar PDF no Service Worker:', err);
+        await cache.put(SHARED_STATUS_KEY, new Response(JSON.stringify({ ok: false, reason: err.message })));
       }
 
-      // Cria a URL absoluta exigida pelo padrão do Service Worker no Android
       const redirectUrl = new URL('./index.html?load-shared=1', self.location.href).href;
       return Response.redirect(redirectUrl, 303);
     })());
@@ -81,7 +81,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 3. Arquivos do próprio app: Network-First com fallback offline (ignorando ?load-shared=1)
+  // 3. Arquivos do próprio app: Network-First com fallback offline
   event.respondWith(
     fetch(event.request)
       .then(networkResponse => {

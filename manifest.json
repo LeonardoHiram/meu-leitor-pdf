@@ -1,10 +1,10 @@
 {
-  "id": "/leitor-pdf-ocr",
+  "id": "/meu-leitor-pdf/",
   "name": "Leitor PDF + OCR",
   "short_name": "Leitor PDF",
   "description": "Leitor de PDF rápido com seleção de texto, modo noturno, compartilhamento e OCR em Português.",
-  "start_url": "./index.html",
-  "scope": "./",
+  "start_url": "https://leonardohiram.github.io/meu-leitor-pdf/index.html",
+  "scope": "https://leonardohiram.github.io/meu-leitor-pdf/",
   "display": "standalone",
   "display_override": ["standalone"],
   "background_color": "#121216",
@@ -35,14 +35,14 @@
   ],
   "file_handlers": [
     {
-      "action": "./index.html",
+      "action": "https://leonardohiram.github.io/meu-leitor-pdf/index.html",
       "accept": {
         "application/pdf": [".pdf"]
       }
     }
   ],
   "share_target": {
-    "action": "./index.html?shared-pdf=1",
+    "action": "https://leonardohiram.github.io/meu-leitor-pdf/index.html?shared-pdf=1",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {

@@ -845,55 +845,47 @@
 	      }
 	    }
 
-	    // Verifica na memória se o Android enviou um PDF via "Share / Compartilhar"
-	    let verificandoShare = false;
-	    async function checkAndroidSharedPdf() {
-	      if (verificandoShare || !('caches' in window)) return;
-	      verificandoShare = true;
+// Verifica na memória se o Android enviou um PDF via "Share / Compartilhar"
+    let verificandoShare = false;
+    async function checkAndroidSharedPdf() {
+      if (verificandoShare || !('caches' in window)) return;
+      verificandoShare = true;
 
-	      try {
-	        const SHARED_PDF_KEY = 'https://shared-pdf.local/documento.pdf';
-	        const cache = await caches.open('leitor-pdf-dinamico');
-	        const response = await cache.match(SHARED_PDF_KEY) || await cache.match('./__shared_pdf__');
+      try {
+        const SHARED_PDF_KEY = 'https://shared-pdf.local/documento.pdf';
+        const SHARED_STATUS_KEY = 'https://shared-pdf.local/status.json';
+        const cache = await caches.open('leitor-pdf-v3');
 
-	        if (response) {
-	          const blob = await response.blob();
-	          const rawName = response.headers.get('X-File-Name');
-	          const fileName = rawName ? decodeURIComponent(rawName) : 'documento.pdf';
-	          const file = new File([blob], fileName, { type: 'application/pdf' });
+        const response = await cache.match(SHARED_PDF_KEY);
+        const statusResp = await cache.match(SHARED_STATUS_KEY);
 
-	          // Limpa o arquivo temporário do cache para não reabrir repetidamente depois
-	          await cache.delete(SHARED_PDF_KEY);
-	          await cache.delete('./__shared_pdf__');
+        if (response) {
+          emptyMsg.innerHTML = '⏳ <b>Carregando PDF compartilhado...</b>';
+          const blob = await response.blob();
+          const rawName = response.headers.get('X-File-Name');
+          const fileName = rawName ? decodeURIComponent(rawName) : 'documento.pdf';
+          const file = new File([blob], fileName, { type: 'application/pdf' });
 
-	          // Limpa a URL caso tenha vindo com ?load-shared=1
-	          if (window.location.search.includes('load-shared')) {
-	            window.history.replaceState({}, document.title, './index.html');
-	          }
+          await cache.delete(SHARED_PDF_KEY);
+          await cache.delete(SHARED_STATUS_KEY);
 
-	          // Dispara a renderização do PDF na tela!
-	          abrirArquivoRecebido(file);
-	        }
-	      } catch (err) {
-	        console.error('Falha ao recuperar PDF compartilhado:', err);
-	      } finally {
-	        verificandoShare = false;
-	      }
-	    }
+          if (window.location.search.includes('load-shared')) {
+            window.history.replaceState({}, document.title, './index.html');
+          }
 
-	    // Checa ao iniciar, ao voltar do segundo plano e ao receber sinal do Service Worker
-	    window.addEventListener('DOMContentLoaded', checkAndroidSharedPdf);
-	    window.addEventListener('load', checkAndroidSharedPdf);
-	    window.addEventListener('pageshow', checkAndroidSharedPdf);
-	    document.addEventListener('visibilitychange', () => {
-	      if (document.visibilityState === 'visible') checkAndroidSharedPdf();
-	    });
-	    if ('serviceWorker' in navigator) {
-	      navigator.serviceWorker.addEventListener('message', event => {
-	        if (event.data && event.data.type === 'SHARED_PDF_READY') {
-	          checkAndroidSharedPdf();
-	        }
-	      });
+          loadPdfFile(file);
+        } else if (statusResp) {
+          const statusData = await statusResp.json();
+          await cache.delete(SHARED_STATUS_KEY);
+          if (!statusData.ok) {
+            alert('Aviso de Diagnóstico do Share: ' + statusData.reason);
+          }
+        }
+      } catch (err) {
+        console.error('Falha ao recuperar PDF compartilhado:', err);
+      } finally {
+        verificandoShare = false;
+      }
     }
 
   </script>
